@@ -7,11 +7,14 @@
 #include "caffe/util/math_functions.hpp"
 #include "caffe/layers/largemargin_inner_product_layer.hpp"
 
+//This is the implementation of the A-softmax loss
+//liuxin
 namespace caffe {
 
 template <typename Dtype>
-void LargeMarginInnerProductLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
-      const vector<Blob<Dtype>*>& top) {
+void AngularMarginInnerProductLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
+      const vector<Blob<Dtype>*>& top) 
+	  {
   CHECK_EQ(bottom[0]->num(), bottom[1]->num())
       << "Number of labels must match number of output; "
       << "DO NOT support multi-label this version."
@@ -19,16 +22,18 @@ void LargeMarginInnerProductLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>&
       << "label count (number of labels) must be M, "
       << "with integer values in {0, 1, ..., N-1}.";
 
-  type_ = this->layer_param_.largemargin_inner_product_param().type();
-  iter_ = this->layer_param_.largemargin_inner_product_param().iteration();
+  type_ = this->layer_param_.angularmargin_inner_product_param().type();
+  iter_ = this->layer_param_.angularmargin_inner_product_param().iteration();
   lambda_ = (Dtype)0.;
 
-  const int num_output = this->layer_param_.largemargin_inner_product_param().num_output();
+  const int num_output = this->layer_param_.angularmargin_inner_product_param().num_output();
   N_ = num_output;
+
   const int axis = bottom[0]->CanonicalAxisIndex(
-      this->layer_param_.largemargin_inner_product_param().axis());
+      this->layer_param_.angularmargin_inner_product_param().axis());
 
   K_ = bottom[0]->count(axis);
+
   // Check if we need to set up the weights
   if (this->blobs_.size() > 0) {
     LOG(INFO) << "Skipping parameter initialization";
@@ -41,25 +46,29 @@ void LargeMarginInnerProductLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>&
     this->blobs_[0].reset(new Blob<Dtype>(weight_shape));
     // fill the weights
     shared_ptr<Filler<Dtype> > weight_filler(GetFiller<Dtype>(
-        this->layer_param_.largemargin_inner_product_param().weight_filler()));
+        this->layer_param_.angularmargin_inner_product_param().weight_filler()));
+
     weight_filler->Fill(this->blobs_[0].get());
   }  // parameter initialization
-  this->param_propagate_down_.resize(this->blobs_.size(), true);
+  this->param_propagate_down_.resize(this->blobs_.size(),
+  true);//确定参数是否需要反向传播求梯度
 }
 
 template <typename Dtype>
-void LargeMarginInnerProductLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
+void AngularMarginInnerProductLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
+
   // Figure out the dimensions
   const int axis = bottom[0]->CanonicalAxisIndex(
-      this->layer_param_.largemargin_inner_product_param().axis());
+      this->layer_param_.angularmargin_inner_product_param().axis());
+
   const int new_K = bottom[0]->count(axis);
   CHECK_EQ(K_, new_K)
       << "Input size incompatible with inner product parameters.";
 
   M_ = bottom[0]->count(0, axis);
 
-  vector<int> top_shape = bottom[0]->shape();
+  vector<int> top_shape = bottom[0]->shape();//输入的维度M_*K_*1*1
   top_shape.resize(axis + 1);
   top_shape[axis] = N_;
   top[0]->Reshape(top_shape);
@@ -73,43 +82,49 @@ void LargeMarginInnerProductLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bo
   x_norm_.Reshape(shape_1_X_M);
   vector<int> shape_1_X_N(1, N_);
   w_norm_.Reshape(shape_1_X_N);
+  //w_norm_scalar.Reshape(shape_1_X_N);
 
   sign_0_.Reshape(top_shape);
   cos_theta_.Reshape(top_shape);
 
   // optional temp variables
   switch (type_) {
-  case LargeMarginInnerProductParameter_LargeMarginType_SINGLE:
+  case AngularMarginInnerProductParameter_AngularMarginType_SINGLE:
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE:
+
+  case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE:
     cos_theta_quadratic_.Reshape(top_shape);
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE:
+
+  case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE:
     cos_theta_quadratic_.Reshape(top_shape);
     cos_theta_cubic_.Reshape(top_shape);
     sign_1_.Reshape(top_shape);
     sign_2_.Reshape(top_shape);
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE:
+
+  case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE:
     cos_theta_quadratic_.Reshape(top_shape);
     cos_theta_cubic_.Reshape(top_shape);
     cos_theta_quartic_.Reshape(top_shape);
     sign_3_.Reshape(top_shape);
     sign_4_.Reshape(top_shape);
     break;
+
   default:
-    LOG(FATAL) << "Unknown L-Softmax type.";
+    LOG(FATAL) << "Unknown A-Softmax type.";
+
   }
 }
 
 template <typename Dtype>
-void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
+void AngularMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
   iter_ += (Dtype)1.;
-  Dtype base_ = this->layer_param_.largemargin_inner_product_param().base();
-  Dtype gamma_ = this->layer_param_.largemargin_inner_product_param().gamma();
-  Dtype power_ = this->layer_param_.largemargin_inner_product_param().power();
-  Dtype lambda_min_ = this->layer_param_.largemargin_inner_product_param().lambda_min();
+  Dtype base_ = this->layer_param_.angularmargin_inner_product_param().base();
+  Dtype gamma_ = this->layer_param_.angularmargin_inner_product_param().gamma();
+  Dtype power_ = this->layer_param_.angularmargin_inner_product_param().power();
+  Dtype lambda_min_ = this->layer_param_.angularmargin_inner_product_param().lambda_min();
   lambda_ = base_ * pow(((Dtype)1. + gamma_ * iter_), -power_);
   lambda_ = std::max(lambda_, lambda_min_);
   top[1]->mutable_cpu_data()[0] = lambda_;
@@ -117,33 +132,64 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>
   /************************* common variables *************************/
   const Dtype* bottom_data = bottom[0]->cpu_data();
   Dtype* mutable_x_norm_data = x_norm_.mutable_cpu_data();
-  for (int i = 0; i < M_; i++) {
+  
+  for (int i = 0; i < M_; i++) 
+  {
+    //特征的L2范数
     mutable_x_norm_data[i] = sqrt(caffe_cpu_dot(K_, bottom_data + i * K_, bottom_data + i * K_));
   }
+  
+  //规范化权重
+  Dtype* weight_=this->blobs_[0]->mutable_cpu_data();
+  Dtype* mutable_w_norm_data = w_norm_.mutable_cpu_data();  
+  //Dtype* mutable_w_norm_data_scalar=w_norm_scalar.mutable_cpu_data();
+  //caffe_set(N_,(Dtype)0.000000001,mutable_w_norm_data_scalar);
+  Dtype alpha;
+  for (int i = 0; i < N_; i++) 
+  {
+    caffe_add_scalar(K_,(Dtype)0.000000001,weight_+i*K_); 	
+    
+    //权重的L2范数
+    mutable_w_norm_data[i] = sqrt(caffe_cpu_dot(K_, weight_+ i * K_, weight_+ i * K_));
+    
+   alpha=1/mutable_w_norm_data[i];
+
+   caffe_cpu_scale(K_,alpha,weight_+i*K_,weight_+i*K_);
+  }
+
   const Dtype* weight = this->blobs_[0]->cpu_data();
-  Dtype* mutable_w_norm_data = w_norm_.mutable_cpu_data();
-  for (int i = 0; i < N_; i++) {
+  for (int i = 0; i < N_; i++) 
+  {	
+    //权重的L2范数
     mutable_w_norm_data[i] = sqrt(caffe_cpu_dot(K_, weight + i * K_, weight + i * K_));
   }
 
   Blob<Dtype> xw_norm_product_;
   xw_norm_product_.Reshape(cos_theta_.shape());
+  //权重和输入特征的L2范数相乘
   caffe_cpu_gemm<Dtype>(CblasTrans, CblasNoTrans, M_, N_, 1, (Dtype)1.,
       x_norm_.cpu_data(), w_norm_.cpu_data(), (Dtype)0., xw_norm_product_.mutable_cpu_data());
+  //权重与输入数据的点乘
   caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasTrans, M_, N_, K_, (Dtype)1.,
       bottom_data, weight, (Dtype)0., cos_theta_.mutable_cpu_data());
+
   caffe_add_scalar(M_ * N_, (Dtype)0.000000001, xw_norm_product_.mutable_cpu_data());
+  
   caffe_div(M_ * N_, cos_theta_.cpu_data(), xw_norm_product_.cpu_data(), cos_theta_.mutable_cpu_data());
 
-  caffe_cpu_sign(M_ * N_, cos_theta_.cpu_data(), sign_0_.mutable_cpu_data());
+  caffe_cpu_sign(M_ * N_, cos_theta_.cpu_data(),
+  sign_0_.mutable_cpu_data());//判定符号
 
-  switch (type_) {
-  case LargeMarginInnerProductParameter_LargeMarginType_SINGLE:
+  switch (type_) 
+  {
+  case AngularMarginInnerProductParameter_AngularMarginType_SINGLE:
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE:
+
+  case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE:
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)2., cos_theta_quadratic_.mutable_cpu_data());
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE:
+
+  case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE:
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)2., cos_theta_quadratic_.mutable_cpu_data());
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)3., cos_theta_cubic_.mutable_cpu_data());
     caffe_abs(M_ * N_, cos_theta_.cpu_data(), sign_1_.mutable_cpu_data());
@@ -154,7 +200,8 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>
     caffe_mul(M_ * N_, sign_0_.cpu_data(), sign_2_.cpu_data(), sign_2_.mutable_cpu_data());
     caffe_add_scalar(M_ * N_, - (Dtype)2., sign_2_.mutable_cpu_data());
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE:
+
+  case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE:
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)2., cos_theta_quadratic_.mutable_cpu_data());
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)3., cos_theta_cubic_.mutable_cpu_data());
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)4., cos_theta_quartic_.mutable_cpu_data());
@@ -169,7 +216,7 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>
     caffe_add_scalar(M_ * N_, - (Dtype)3., sign_4_.mutable_cpu_data());
     break;
   default:
-    LOG(FATAL) << "Unknown L-Softmax type.";
+    LOG(FATAL) << "Unknown A-Softmax type.";
   }
 
   /************************* Forward *************************/
@@ -179,10 +226,10 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>
   const Dtype* label = bottom[1]->cpu_data();
   const Dtype* xw_norm_product_data = xw_norm_product_.cpu_data();
     switch (type_) {
-  case LargeMarginInnerProductParameter_LargeMarginType_SINGLE: {
+  case AngularMarginInnerProductParameter_AngularMarginType_SINGLE: {
     break;
   }
-  case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE: {
+  case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE: {
   	const Dtype* sign_0_data = sign_0_.cpu_data();
   	const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
     for (int i = 0; i < M_; i++) {
@@ -196,7 +243,7 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>
     caffe_scal(M_ * N_, (Dtype)1./((Dtype)1. + lambda_), top_data);
     break;
   }
-  case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE: {
+  case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE: {
   	const Dtype* sign_1_data = sign_1_.cpu_data();
     const Dtype* sign_2_data = sign_2_.cpu_data();
     const Dtype* cos_theta_data = cos_theta_.cpu_data();
@@ -214,7 +261,7 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>
     caffe_scal(M_ * N_, (Dtype)1./((Dtype)1. + lambda_), top_data);
     break;
   }
-  case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE: {
+  case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE: {
   	const Dtype* sign_3_data = sign_3_.cpu_data();
     const Dtype* sign_4_data = sign_4_.cpu_data();
     const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
@@ -233,7 +280,7 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>
     break;
   }
   default: {
-    LOG(FATAL) << "Unknown L-Softmax type.";
+    LOG(FATAL) << "Unknown A-Softmax type.";
   }
   }
 }
@@ -261,12 +308,12 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
     Dtype* weight_diff = this->blobs_[0]->mutable_cpu_diff();
     const Dtype* xw_norm_ratio_data = xw_norm_ratio_.cpu_data();
     switch (type_) {
-    case LargeMarginInnerProductParameter_LargeMarginType_SINGLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_SINGLE: {
       caffe_cpu_gemm<Dtype>(CblasTrans, CblasNoTrans, N_, K_, M_, (Dtype)1.,
         top_diff, bottom_data, (Dtype)1., this->blobs_[0]->mutable_cpu_diff());
       break;
     }
-    case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE: {
       const Dtype* sign_0_data = sign_0_.cpu_data();
       const Dtype* cos_theta_data = cos_theta_.cpu_data();
       const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
@@ -291,7 +338,7 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
         top_diff, bottom_data, (Dtype)1., this->blobs_[0]->mutable_cpu_diff());
       break;
     }
-    case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE: {
       const Dtype* sign_1_data = sign_1_.cpu_data();
       const Dtype* sign_2_data = sign_2_.cpu_data();
       const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
@@ -318,7 +365,7 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
         top_diff, bottom_data, (Dtype)1., this->blobs_[0]->mutable_cpu_diff());
       break;
     }
-    case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE: {
       const Dtype* sign_3_data = sign_3_.cpu_data();
       const Dtype* sign_4_data = sign_4_.cpu_data();
       const Dtype* cos_theta_data = cos_theta_.cpu_data();
@@ -354,7 +401,7 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
       break;
     }
     default: {
-      LOG(FATAL) << "Unknown L-Softmax type.";
+      LOG(FATAL) << "Unknown A-Softmax type.";
     }
     }
   }
@@ -365,13 +412,13 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
     const Dtype* xw_norm_ratio_data = xw_norm_ratio_.cpu_data();
     caffe_set(M_ * K_, (Dtype)0., bottom_diff);
     switch (type_) {
-    case LargeMarginInnerProductParameter_LargeMarginType_SINGLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_SINGLE: {
       caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, M_, K_, N_, (Dtype)1.,
         top_diff, this->blobs_[0]->cpu_data(), (Dtype)0.,
         bottom[0]->mutable_cpu_diff());
       break;
     }
-    case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE: {
       const Dtype* sign_0_data = sign_0_.cpu_data();
       const Dtype* cos_theta_data = cos_theta_.cpu_data();
       const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
@@ -402,7 +449,7 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
         bottom[0]->mutable_cpu_diff());
       break;
     }
-    case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE: {
       const Dtype* sign_1_data = sign_1_.cpu_data();
       const Dtype* sign_2_data = sign_2_.cpu_data();
       const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
@@ -434,7 +481,7 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
         bottom[0]->mutable_cpu_diff());
       break;
     }
-    case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE: {
       const Dtype* sign_3_data = sign_3_.cpu_data();
       const Dtype* sign_4_data = sign_4_.cpu_data();
       const Dtype* cos_theta_data = cos_theta_.cpu_data();
@@ -469,17 +516,17 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
       break;
     }
     default: {
-      LOG(FATAL) << "Unknown L-Softmax type.";
+      LOG(FATAL) << "Unknown A-Softmax type.";
     }
     }
   }
 }
 
 #ifdef CPU_ONLY
-STUB_GPU(LargeMarginInnerProductLayer);
+STUB_GPU(AngularMarginInnerProductLayer);
 #endif
 
-INSTANTIATE_CLASS(LargeMarginInnerProductLayer);
-REGISTER_LAYER_CLASS(LargeMarginInnerProduct);
+INSTANTIATE_CLASS(AngularMarginInnerProductLayer);
+REGISTER_LAYER_CLASS(AngularMarginInnerProduct);
 
 }  // namespace caffe
