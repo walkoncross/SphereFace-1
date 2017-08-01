@@ -6,9 +6,35 @@
 #include "caffe/filler.hpp"
 #include "caffe/layer.hpp"
 #include "caffe/util/math_functions.hpp"
-#include "caffe/layers/largemargin_inner_product_layer.hpp"
+#include "caffe/layers/A_Softmax_Loss.hpp"
 
 namespace caffe {
+
+template <typename Dtype>
+__global__ void Copy_weight(int nthreads,const
+Dtype*weight,Dtype*mutable_w_norm_scalar)
+{
+  CUDA_KERNEL_LOOP(index,nthreads)
+  {
+		mutable_w_norm_scalar[index]=weight[index];
+  }
+		
+}
+template<typename Dtype>
+__global__ void Add_scalar_to_weight(int nthreads,const Dtype
+num,Dtype*mutable_w_norm_scalar)
+{
+		CUDA_KERNEL_LOOP(index,nthreads)
+		{
+				mutable_w_norm_scalar[index]+=num;
+				
+		}
+}
+
+
+
+
+
 template <typename Dtype>
 __global__ void Compute_bottom_norm_gpu(int nthreads, const int K_,
           const Dtype* bottom, Dtype* x_norm) {
@@ -20,6 +46,7 @@ __global__ void Compute_bottom_norm_gpu(int nthreads, const int K_,
     x_norm[index] = sqrt(sum_sqaure);
   }
 }
+
 template <typename Dtype>
 __global__ void Compute_weight_norm_gpu(int nthreads, const int K_,
           const Dtype* weight, Dtype* w_norm) {
@@ -31,6 +58,7 @@ __global__ void Compute_weight_norm_gpu(int nthreads, const int K_,
     w_norm[index] = sqrt(sum_sqaure);
   }
 }
+
 template <typename Dtype>
 __global__ void Compute_cos_theta_gpu(int nthreads, const int N_,
           const Dtype* x_norm, const Dtype* w_norm, Dtype* cos_theta) {
@@ -73,7 +101,7 @@ __global__ void Compute_sign_4_gpu(int nthreads, const Dtype* sign_0,
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_double_forward_gpu(int nthreads, const int N_, Dtype lambda,
+__global__ void AngularMargin_double_forward_gpu(int nthreads, const int N_, Dtype lambda,
             const Dtype* label, const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_0, 
             const Dtype* cos_theta_quadratic, Dtype* top) {
   CUDA_KERNEL_LOOP(index, nthreads) {
@@ -91,7 +119,7 @@ __global__ void LargeMargin_double_forward_gpu(int nthreads, const int N_, Dtype
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_triple_forward_gpu(int nthreads, const int N_, Dtype lambda,
+__global__ void AngularMargin_triple_forward_gpu(int nthreads, const int N_, Dtype lambda,
             const Dtype* label, const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_1, 
             const Dtype* sign_2, const Dtype* cos_theta, const Dtype* cos_theta_cubic,
             Dtype* top) {
@@ -110,7 +138,7 @@ __global__ void LargeMargin_triple_forward_gpu(int nthreads, const int N_, Dtype
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_quadruple_forward_gpu(int nthreads, const int N_, Dtype lambda,
+__global__ void AngularMargin_quadruple_forward_gpu(int nthreads, const int N_, Dtype lambda,
             const Dtype* label, const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_3, 
             const Dtype* sign_4, const Dtype* cos_theta_quadratic, const Dtype* cos_theta_quartic,
             Dtype* top) {
@@ -129,7 +157,7 @@ __global__ void LargeMargin_quadruple_forward_gpu(int nthreads, const int N_, Dt
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_weight_double_backward_gpu(int nthreads, const int M_, 
+__global__ void AngularMargin_weight_double_backward_gpu(int nthreads, const int M_, 
             const int N_, const int K_, Dtype lambda, const Dtype* weight,
             const Dtype* bottom, const Dtype* top_diff, const Dtype* label,
             const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_0, const Dtype* cos_theta,
@@ -156,7 +184,7 @@ __global__ void LargeMargin_weight_double_backward_gpu(int nthreads, const int M
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_weight_triple_backward_gpu(int nthreads, const int M_, 
+__global__ void AngularMargin_weight_triple_backward_gpu(int nthreads, const int M_, 
             const int N_, const int K_, Dtype lambda, const Dtype* weight,
             const Dtype* bottom, const Dtype* top_diff, const Dtype* label,
             const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_1, const Dtype* sign_2, 
@@ -183,7 +211,7 @@ __global__ void LargeMargin_weight_triple_backward_gpu(int nthreads, const int M
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_weight_quadruple_backward_gpu(int nthreads, const int M_, 
+__global__ void AngularMargin_weight_quadruple_backward_gpu(int nthreads, const int M_, 
             const int N_, const int K_, Dtype lambda, const Dtype* weight,
             const Dtype* bottom, const Dtype* top_diff, const Dtype* label,
             const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_3, 
@@ -211,7 +239,7 @@ __global__ void LargeMargin_weight_quadruple_backward_gpu(int nthreads, const in
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_bottom_double_backward_gpu(int nthreads, const int N_, const int K_, Dtype lambda,
+__global__ void AngularMargin_bottom_double_backward_gpu(int nthreads, const int N_, const int K_, Dtype lambda,
             const Dtype* bottom, const Dtype* weight, const Dtype* top_diff, const Dtype* label,
             const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_0, const Dtype* cos_theta,
             const Dtype* cos_theta_quadratic, Dtype* bottom_diff) {
@@ -238,7 +266,7 @@ __global__ void LargeMargin_bottom_double_backward_gpu(int nthreads, const int N
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_bottom_triple_backward_gpu(int nthreads, const int N_, const int K_, Dtype lambda,
+__global__ void AngularMargin_bottom_triple_backward_gpu(int nthreads, const int N_, const int K_, Dtype lambda,
             const Dtype* bottom, const Dtype* weight, const Dtype* top_diff, const Dtype* label,
             const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_1, const Dtype* sign_2, 
             const Dtype* cos_theta_quadratic, const Dtype* cos_theta_cubic, Dtype* bottom_diff) {
@@ -265,7 +293,7 @@ __global__ void LargeMargin_bottom_triple_backward_gpu(int nthreads, const int N
 }
 
 template <typename Dtype>
-__global__ void LargeMargin_bottom_quadruple_backward_gpu(int nthreads, const int N_, const int K_, Dtype lambda,
+__global__ void AngularMargin_bottom_quadruple_backward_gpu(int nthreads, const int N_, const int K_, Dtype lambda,
             const Dtype* bottom, const Dtype* weight, const Dtype* top_diff, const Dtype* label,
             const Dtype* x_norm, const Dtype* w_norm, const Dtype* sign_3, 
             const Dtype* sign_4, const Dtype* cos_theta, const Dtype* cos_theta_quadratic, 
@@ -293,30 +321,58 @@ __global__ void LargeMargin_bottom_quadruple_backward_gpu(int nthreads, const in
 }
 
 template <typename Dtype>
-void LargeMarginInnerProductLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
+void AngularMarginInnerProductLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
+
   iter_ += (Dtype)1.;
-  Dtype base_ = this->layer_param_.largemargin_inner_product_param().base();
-  Dtype gamma_ = this->layer_param_.largemargin_inner_product_param().gamma();
-  Dtype power_ = this->layer_param_.largemargin_inner_product_param().power();
-  Dtype lambda_min_ = this->layer_param_.largemargin_inner_product_param().lambda_min();
+  Dtype base_ = this->layer_param_.angularmargin_inner_product_param().base();
+  Dtype gamma_ = this->layer_param_.angularmargin_inner_product_param().gamma();
+  Dtype power_ = this->layer_param_.angularmargin_inner_product_param().power();
+  Dtype lambda_min_ = this->layer_param_.angularmargin_inner_product_param().lambda_min();
   lambda_ = base_ * powf(((Dtype)1. + gamma_ * iter_), -power_);
   lambda_ = max(lambda_, lambda_min_);
   top[1]->mutable_cpu_data()[0] = lambda_;
 
   const Dtype* bottom_data = bottom[0]->gpu_data();
-  const Dtype* weight = this->blobs_[0]->gpu_data();
+  Dtype* weight_ = this->blobs_[0]->mutable_gpu_data();
+
   Dtype* top_data = top[0]->mutable_gpu_data();
   const Dtype* label = bottom[1]->gpu_data();
 
   /************************* common variables *************************/
 
   int nthreads = M_;
+  //CAFFE_CUDA_NUM_THREADS=512
   Compute_bottom_norm_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, K_, bottom_data,
                                 x_norm_.mutable_gpu_data());
 
   nthreads = N_;
+  Dtype* mutable_w_norm_scalar=w_norm_scalar.mutable_gpu_data();
+  Dtype* mutable_w_norm=w_norm_.mutable_gpu_data();
+  //first normalize the weigtht 
+  Dtype alpha;
+  for(int i=0;i<N_;i++)
+  {
+		//Copy_weight<Dtype><<<CAFFE_GET_BLOCKS(K_),CAFFE_CUDA_NUM_THREADS>>>(K_,weight_+i*K_,mutable_w_norm_scalar);
+		//add scalar to the weight
+		//Add_scalar_to_weight<Dtype><<<CAFFE_GET_BLOCKS(K_),CAFFE_CUDA_NUM_THREADS>>>(K_,(Dtype)0.000000001,mutable_w_norm_scalar);
+		  
+		//compute the norm of scalar weight
+		//Norm_of_weight<Dtype><<<CAFFE_GET_BLOCKS(K_),CAFFE_CUDA_NUM_THREADS>>>(
+		//nthreads,w_norm_scalar,mutable_w_norm+i);
+       
+		//normalize the weight
+		//Normalize_the_weight<Dtype><<<CAFFE_GET_BLOCKS(K_),CAFFE_CUDA_NUM_THREADS>>>(K_,mutable_w_norm+i,weight_+i*K_);
+  caffe_gpu_memcpy(sizeof(Dtype)*K_,weight_+i*K_,mutable_w_norm_scalar);
+  caffe_gpu_add_scalar(K_,(Dtype)0.000000001,mutable_w_norm_scalar);
+  caffe_gpu_dot(K_,mutable_w_norm_scalar,mutable_w_norm_scalar,mutable_w_norm+i);
+  alpha=1/mutable_w_norm[i];
+  caffe_gpu_scale(K_,alpha,weight_+i*K_,weight_+i*K_);
+  }
+  
+  const Dtype* weight=this->blobs_[0]->gpu_data();
+
   Compute_weight_norm_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, K_, weight,
                                 w_norm_.mutable_gpu_data());
@@ -325,6 +381,7 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>
 
   caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasTrans, M_, N_, K_, (Dtype)1.,
       bottom_data, weight, (Dtype)0., cos_theta_.mutable_gpu_data());
+
   Compute_cos_theta_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, N_, x_norm_.gpu_data(), w_norm_.gpu_data(), 
       	                        cos_theta_.mutable_gpu_data());
@@ -333,13 +390,13 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>
   
   /************************* optional variables *************************/
   switch (type_) {
-  case LargeMarginInnerProductParameter_LargeMarginType_SINGLE:
+  case AngularMarginInnerProductParameter_AngularMarginType_SINGLE:
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE:
+  case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE:
 
     caffe_gpu_powx(M_ * N_, cos_theta_.gpu_data(), (Dtype)2., cos_theta_quadratic_.mutable_gpu_data());
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE:
+  case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE:
 
     caffe_gpu_powx(M_ * N_, cos_theta_.gpu_data(), (Dtype)2., cos_theta_quadratic_.mutable_gpu_data());
     caffe_gpu_powx(M_ * N_, cos_theta_.gpu_data(), (Dtype)3., cos_theta_cubic_.mutable_gpu_data());
@@ -352,7 +409,7 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, sign_0_.gpu_data(),
                                 sign_1_.gpu_data(), sign_2_.mutable_gpu_data());
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE:
+  case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE:
 
     caffe_gpu_powx(M_ * N_, cos_theta_.gpu_data(), (Dtype)2., cos_theta_quadratic_.mutable_gpu_data());
     caffe_gpu_powx(M_ * N_, cos_theta_.gpu_data(), (Dtype)3., cos_theta_cubic_.mutable_gpu_data());
@@ -368,40 +425,40 @@ void LargeMarginInnerProductLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>
                                 sign_3_.gpu_data(), sign_4_.mutable_gpu_data());
     break;
   default:
-    LOG(FATAL) << "Unknown LargeMargin type.";
+    LOG(FATAL) << "Unknown AngularMargin type.";
   }
 
   /************************* Forward *************************/
   caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasTrans, M_, N_, K_, (Dtype)1.,
       bottom_data, weight, (Dtype)0., top_data);
   switch (type_) {
-  case LargeMarginInnerProductParameter_LargeMarginType_SINGLE:
+  case AngularMarginInnerProductParameter_AngularMarginType_SINGLE:
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE:
+  case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE:
 
-    LargeMargin_double_forward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+    AngularMargin_double_forward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, N_, lambda_, label, x_norm_.gpu_data(), w_norm_.gpu_data(),
       	                        sign_0_.gpu_data(), cos_theta_quadratic_.gpu_data(), top_data);
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE:
-    LargeMargin_triple_forward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+  case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE:
+    AngularMargin_triple_forward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, N_, lambda_, label, x_norm_.gpu_data(), w_norm_.gpu_data(),
                                 sign_1_.gpu_data(), sign_2_.gpu_data(), cos_theta_.gpu_data(), 
                                 cos_theta_cubic_.gpu_data(), top_data);
     break;
-  case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE:
-    LargeMargin_quadruple_forward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+  case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE:
+    AngularMargin_quadruple_forward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, N_, lambda_, label, x_norm_.gpu_data(), w_norm_.gpu_data(),
       	                        sign_3_.gpu_data(), sign_4_.gpu_data(), cos_theta_quadratic_.gpu_data(), 
                                 cos_theta_quartic_.gpu_data(), top_data);
     break;
   default:
-    LOG(FATAL) << "Unknown LargeMargin type.";
+    LOG(FATAL) << "Unknown AngularMargin type.";
   }
 }
-
+i
 template <typename Dtype>
-void LargeMarginInnerProductLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
+void AngularMarginInnerProductLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
     const vector<bool>& propagate_down,
     const vector<Blob<Dtype>*>& bottom) {
 
@@ -415,31 +472,31 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*
     // Gradient with respect to weight
     int nthreads = N_ * K_;
     switch (type_) {
-    case LargeMarginInnerProductParameter_LargeMarginType_SINGLE:
+    case AngularMarginInnerProductParameter_AngularMarginType_SINGLE:
       caffe_gpu_gemm<Dtype>(CblasTrans, CblasNoTrans, N_, K_, M_, (Dtype)1.,
         top_diff, bottom_data, (Dtype)1., this->blobs_[0]->mutable_gpu_diff());
       break;
-    case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE:
-      LargeMargin_weight_double_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+    case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE:
+      AngularMargin_weight_double_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
         CAFFE_CUDA_NUM_THREADS>>>(nthreads, M_, N_, K_, lambda_, weight, bottom_data, top_diff, label,
                                   x_norm_.gpu_data(), w_norm_.gpu_data(), sign_0_.gpu_data(), 
                                   cos_theta_.gpu_data(), cos_theta_quadratic_.gpu_data(), weight_diff);
       break;
-    case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE:
-      LargeMargin_weight_triple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+    case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE:
+      AngularMargin_weight_triple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
         CAFFE_CUDA_NUM_THREADS>>>(nthreads, M_, N_, K_, lambda_, weight, bottom_data, top_diff, label,
         	                      x_norm_.gpu_data(), w_norm_.gpu_data(), sign_1_.gpu_data(), sign_2_.gpu_data(),
                                   cos_theta_quadratic_.gpu_data(), cos_theta_cubic_.gpu_data(), weight_diff);
       break;
-    case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE:
-      LargeMargin_weight_quadruple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+    case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE:
+      AngularMargin_weight_quadruple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
         CAFFE_CUDA_NUM_THREADS>>>(nthreads, M_, N_, K_, lambda_, weight, bottom_data, top_diff, label,
         	                      x_norm_.gpu_data(), w_norm_.gpu_data(), sign_3_.gpu_data(), sign_4_.gpu_data(),
                                   cos_theta_.gpu_data(), cos_theta_quadratic_.gpu_data(),
                                   cos_theta_cubic_.gpu_data(), cos_theta_quartic_.gpu_data(), weight_diff);
       break;
     default:
-      LOG(FATAL) << "Unknown LargeMargin type.";
+      LOG(FATAL) << "Unknown AngularMargin type.";
     }
   }
 
@@ -448,27 +505,27 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*
     // Gradient with respect to bottom data
     int nthreads = M_ * K_;
     switch (type_) {
-    case LargeMarginInnerProductParameter_LargeMarginType_SINGLE:
+    case AngularMarginInnerProductParameter_AngularMarginType_SINGLE:
       caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, M_, K_, N_, (Dtype)1.,
         top_diff, this->blobs_[0]->gpu_data(), (Dtype)0.,
         bottom[0]->mutable_gpu_diff());
       break;
-    case LargeMarginInnerProductParameter_LargeMarginType_DOUBLE:
-      LargeMargin_bottom_double_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+    case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE:
+      AngularMargin_bottom_double_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
         CAFFE_CUDA_NUM_THREADS>>>(nthreads, N_, K_, lambda_, bottom_data, weight, top_diff, label,
                                   x_norm_.gpu_data(), w_norm_.gpu_data(), sign_0_.gpu_data(), 
                                   cos_theta_.gpu_data(), cos_theta_quadratic_.gpu_data(),                                  
                                   bottom_diff);
       break;
-    case LargeMarginInnerProductParameter_LargeMarginType_TRIPLE:
-      LargeMargin_bottom_triple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+    case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE:
+      AngularMargin_bottom_triple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
         CAFFE_CUDA_NUM_THREADS>>>(nthreads, N_, K_, lambda_, bottom_data, weight, top_diff, label,
                                   x_norm_.gpu_data(), w_norm_.gpu_data(), sign_1_.gpu_data(), sign_2_.gpu_data(),
                                   cos_theta_quadratic_.gpu_data(), cos_theta_cubic_.gpu_data(),
                                   bottom_diff);
       break;
-    case LargeMarginInnerProductParameter_LargeMarginType_QUADRUPLE:
-      LargeMargin_bottom_quadruple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
+    case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE:
+      AngularMargin_bottom_quadruple_backward_gpu<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
         CAFFE_CUDA_NUM_THREADS>>>(nthreads, N_, K_, lambda_, bottom_data, weight, top_diff, label,
                                   x_norm_.gpu_data(), w_norm_.gpu_data(), sign_3_.gpu_data(), sign_4_.gpu_data(),
                                   cos_theta_.gpu_data(), cos_theta_quadratic_.gpu_data(),
@@ -476,11 +533,11 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*
                                   bottom_diff);
       break;
     default:
-      LOG(FATAL) << "Unknown LargeMargin type.";
+      LOG(FATAL) << "Unknown AngularMargin type.";
     }
   }
 }
 
-INSTANTIATE_LAYER_GPU_FUNCS(LargeMarginInnerProductLayer);
+INSTANTIATE_LAYER_GPU_FUNCS(AngularMarginInnerProductLayer);
 
 }  // namespace caffe

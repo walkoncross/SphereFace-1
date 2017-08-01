@@ -5,7 +5,7 @@
 #include "caffe/filler.hpp"
 #include "caffe/layer.hpp"
 #include "caffe/util/math_functions.hpp"
-#include "caffe/layers/largemargin_inner_product_layer.hpp"
+#include "caffe/layers/A_Softmax_Loss.hpp"
 
 //This is the implementation of the A-softmax loss
 //liuxin
@@ -80,9 +80,12 @@ void AngularMarginInnerProductLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& 
   // common variables
   vector<int> shape_1_X_M(1, M_);
   x_norm_.Reshape(shape_1_X_M);
+
   vector<int> shape_1_X_N(1, N_);
   w_norm_.Reshape(shape_1_X_N);
-  //w_norm_scalar.Reshape(shape_1_X_N);
+
+  vector<int> shape_1_X_K(1,K_);
+  w_norm_scalar.Reshape(shape_1_X_K);
 
   sign_0_.Reshape(top_shape);
   cos_theta_.Reshape(top_shape);
@@ -137,20 +140,23 @@ void AngularMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>
   {
     //特征的L2范数
     mutable_x_norm_data[i] = sqrt(caffe_cpu_dot(K_, bottom_data + i * K_, bottom_data + i * K_));
+
   }
   
   //规范化权重
   Dtype* weight_=this->blobs_[0]->mutable_cpu_data();
   Dtype* mutable_w_norm_data = w_norm_.mutable_cpu_data();  
-  //Dtype* mutable_w_norm_data_scalar=w_norm_scalar.mutable_cpu_data();
-  //caffe_set(N_,(Dtype)0.000000001,mutable_w_norm_data_scalar);
+  Dtype* mutable_w_norm_scalar=w_norm_scalar.mutable_cpu_data();
+  //caffe_set(N_,(Dtype)0,mutable_w_norm_data_scalar);
   Dtype alpha;
   for (int i = 0; i < N_; i++) 
   {
-    caffe_add_scalar(K_,(Dtype)0.000000001,weight_+i*K_); 	
+	caffe_copy(sizeof(Dtype)*K_,weight_+i*K_,mutable_w_norm_scalar);
+
+    caffe_add_scalar(K_,(Dtype)0.000000001,mutable_w_norm_scalar); 	
     
     //权重的L2范数
-    mutable_w_norm_data[i] = sqrt(caffe_cpu_dot(K_, weight_+ i * K_, weight_+ i * K_));
+    mutable_w_norm_data[i] = sqrt(caffe_cpu_dot(K_, mutable_w_norm_scalar,mutable_w_norm_scalar));
     
    alpha=1/mutable_w_norm_data[i];
 
@@ -192,6 +198,7 @@ void AngularMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>
   case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE:
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)2., cos_theta_quadratic_.mutable_cpu_data());
     caffe_powx(M_ * N_, cos_theta_.cpu_data(), (Dtype)3., cos_theta_cubic_.mutable_cpu_data());
+
     caffe_abs(M_ * N_, cos_theta_.cpu_data(), sign_1_.mutable_cpu_data());
     caffe_add_scalar(M_ * N_, -(Dtype)0.5, sign_1_.mutable_cpu_data());
     caffe_cpu_sign(M_ * N_, sign_1_.cpu_data(), sign_1_.mutable_cpu_data());
@@ -225,7 +232,10 @@ void AngularMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>
       bottom_data, weight, (Dtype)0., top_data);
   const Dtype* label = bottom[1]->cpu_data();
   const Dtype* xw_norm_product_data = xw_norm_product_.cpu_data();
-    switch (type_) {
+
+    switch (type_) 
+	{
+			
   case AngularMarginInnerProductParameter_AngularMarginType_SINGLE: {
     break;
   }
@@ -288,23 +298,31 @@ void AngularMarginInnerProductLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>
 template <typename Dtype>
 void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
     const vector<bool>& propagate_down,
-    const vector<Blob<Dtype>*>& bottom) {
+    const vector<Blob<Dtype>*>& bottom) 
+	{
+
   Blob<Dtype> inv_w_norm_;
   inv_w_norm_.Reshape(w_norm_.shape());
+
   Blob<Dtype> xw_norm_ratio_;
   xw_norm_ratio_.Reshape(cos_theta_.shape());
-  caffe_add_scalar(N_, (Dtype)0.000000001, w_norm_.mutable_cpu_data());
+  
+  //caffe_add_scalar(N_, (Dtype)0.000000001, w_norm_.mutable_cpu_data());
   caffe_set(N_, (Dtype)1., inv_w_norm_.mutable_cpu_data());
-  caffe_div(N_, inv_w_norm_.cpu_data(), w_norm_.cpu_data(), inv_w_norm_.mutable_cpu_data());
+  
+  //caffe_div(N_, inv_w_norm_.cpu_data(), w_norm_.cpu_data(), inv_w_norm_.mutable_cpu_data());
+  
   caffe_cpu_gemm<Dtype>(CblasTrans, CblasNoTrans, M_, N_, 1, (Dtype)1.,
-      x_norm_.cpu_data(), inv_w_norm_.cpu_data(), (Dtype)0., xw_norm_ratio_.mutable_cpu_data());
+      x_norm_.cpu_data(), inv_w_norm_.cpu_data(), (Dtype)0.,
+	  xw_norm_ratio_.mutable_cpu_data());//由于w规范化为一，故此处只有||x||
 
   const Dtype* top_diff = top[0]->cpu_diff();
   const Dtype* bottom_data = bottom[0]->cpu_data();
   const Dtype* label = bottom[1]->cpu_data();
   const Dtype* weight = this->blobs_[0]->cpu_data();
  
-  if (this->param_propagate_down_[0]) {
+  if (this->param_propagate_down_[0])//gradient with respect to weight 
+  {
     Dtype* weight_diff = this->blobs_[0]->mutable_cpu_diff();
     const Dtype* xw_norm_ratio_data = xw_norm_ratio_.cpu_data();
     switch (type_) {
@@ -313,12 +331,15 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
         top_diff, bottom_data, (Dtype)1., this->blobs_[0]->mutable_cpu_diff());
       break;
     }
-    case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE: {
+    case AngularMarginInnerProductParameter_AngularMarginType_DOUBLE: 
+	{
       const Dtype* sign_0_data = sign_0_.cpu_data();
       const Dtype* cos_theta_data = cos_theta_.cpu_data();
       const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
-      for (int i = 0; i < N_; i++) {
-        for (int j = 0; j < M_; j++) {
+      for (int i = 0; i < N_; i++) 
+	  {
+        for (int j = 0; j < M_; j++) 
+		{
           const int label_value = static_cast<int>(label[j]);
           if (label_value != i) {
             caffe_cpu_axpby(K_, (Dtype)1. / ((Dtype)1. + lambda_) * top_diff[j * N_ + i], 
@@ -338,13 +359,16 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
         top_diff, bottom_data, (Dtype)1., this->blobs_[0]->mutable_cpu_diff());
       break;
     }
+
     case AngularMarginInnerProductParameter_AngularMarginType_TRIPLE: {
       const Dtype* sign_1_data = sign_1_.cpu_data();
       const Dtype* sign_2_data = sign_2_.cpu_data();
       const Dtype* cos_theta_quadratic_data = cos_theta_quadratic_.cpu_data();
       const Dtype* cos_theta_cubic_data = cos_theta_cubic_.cpu_data();
-      for (int i = 0; i < N_; i++) {
-        for (int j = 0; j < M_; j++) {
+      for (int i = 0; i < N_; i++) 
+	  {
+        for (int j = 0; j < M_; j++) 
+		{
           const int label_value = static_cast<int>(label[j]);
           if (label_value != i) {
             caffe_cpu_axpby(K_, (Dtype)1. / ((Dtype)1. + lambda_) * top_diff[j * N_ + i], 
@@ -365,6 +389,7 @@ void LargeMarginInnerProductLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*
         top_diff, bottom_data, (Dtype)1., this->blobs_[0]->mutable_cpu_diff());
       break;
     }
+
     case AngularMarginInnerProductParameter_AngularMarginType_QUADRUPLE: {
       const Dtype* sign_3_data = sign_3_.cpu_data();
       const Dtype* sign_4_data = sign_4_.cpu_data();

@@ -60,6 +60,7 @@ class AngularMarginInnerProductLayer : public Layer<Dtype>
   // common variables
   Blob<Dtype> x_norm_;//输入特征的范数
   Blob<Dtype> w_norm_;//权重的范数
+  Blob<Dtype> w_norm_scalar;
   Blob<Dtype> cos_theta_;//余弦角度
   Blob<Dtype> sign_0_; // sign_0 = sign(cos_theta)
 
